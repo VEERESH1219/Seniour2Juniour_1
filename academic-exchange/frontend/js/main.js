@@ -1,5 +1,4 @@
 // ✅ AUTOMATIC IP CONFIGURATION
-// This grabs the current address (e.g., http://192.168.1.5:5000) from the browser bar
 const BASE_URL = window.location.origin;
 const API_URL = `${BASE_URL}/api/auth`;
 const LISTINGS_URL = `${BASE_URL}/api/listings`;
@@ -8,8 +7,10 @@ let allBooks = [];
 let socket = null; 
 let currentChatRoom = null; 
 let currentUserId = null;
+let userLat = null;
+let userLng = null;
 
-// ✅ AUTO-CONNECT ON PAGE LOAD
+// ✅ AUTO-CONNECT
 document.addEventListener('DOMContentLoaded', () => {
     const token = localStorage.getItem('token');
     const username = localStorage.getItem('username');
@@ -48,7 +49,7 @@ async function login() {
         }
     } catch (err) { 
         console.error("Login Error:", err);
-        alert("Cannot connect to server. Ensure the backend is running on the same network."); 
+        alert("Cannot connect to server."); 
     }
 }
 
@@ -76,12 +77,134 @@ function logout() {
     window.location.reload();
 }
 
+// --- 📍 LOCATION LOGIC ---
+
+// 1. Helper to get position as a Promise (Auto-called on submit)
+function getPosition() {
+    return new Promise((resolve) => {
+        if (!navigator.geolocation) {
+            resolve(null);
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(
+            (position) => resolve({ lat: position.coords.latitude, lng: position.coords.longitude }),
+            () => resolve(null), // If denied, resolve null
+            { enableHighAccuracy: true, timeout: 5000 }
+        );
+    });
+}
+
+// 2. Initialize Location (For Buying/Viewing)
+function initUserLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((position) => {
+            userLat = position.coords.latitude;
+            userLng = position.coords.longitude;
+            document.getElementById('location-bar').classList.remove('hidden');
+            filterBooks();
+        });
+    }
+}
+
+// 3. Helper: Calculate Distance in KM
+function getDistanceKm(lat1, lon1, lat2, lon2) {
+    const R = 6371; 
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; 
+}
+
+// --- LISTINGS ---
+async function loadListings() {
+    try {
+        const response = await fetch(LISTINGS_URL);
+        allBooks = await response.json();
+        allBooks.sort((a, b) => b.id - a.id);
+        
+        if(document.getElementById('dashboard-title')) document.getElementById('dashboard-title').innerText = ""; 
+        
+        initUserLocation();
+        filterBooks();
+    } catch (e) { console.error(e); }
+}
+
+function filterBooks() {
+    const term = document.getElementById('search-box').value.toLowerCase();
+    const rangeKm = document.getElementById('range-slider').value;
+    document.getElementById('range-val').innerText = `${rangeKm} km`;
+
+    const cont = document.getElementById('listings-container');
+    const user = localStorage.getItem('username'); 
+    
+    // 1. Text Search Filter
+    let filtered = allBooks.filter(b => b.title.toLowerCase().includes(term) || b.username.toLowerCase().includes(term));
+    
+    // 2. Location Filter & Sort
+    if (userLat && userLng) {
+        filtered.forEach(book => {
+            if (book.lat && book.lng) {
+                book.distance = getDistanceKm(userLat, userLng, book.lat, book.lng);
+            } else {
+                book.distance = Infinity; 
+            }
+        });
+        filtered = filtered.filter(b => b.distance <= rangeKm || b.distance === Infinity);
+        filtered.sort((a, b) => a.distance - b.distance);
+    }
+
+    cont.innerHTML = '';
+    
+    if (filtered.length === 0) {
+        cont.innerHTML = `<div class="col-span-full text-center py-10 text-gray-400">No products found within range.</div>`;
+        return;
+    }
+
+    filtered.forEach((b, i) => {
+        const img = b.image_url ? `${BASE_URL}${b.image_url}` : null;
+        const imgHTML = img ? `<img src="${img}" class="w-full h-48 object-cover">` : `<div class="w-full h-48 bg-gray-100 flex items-center justify-center text-xs text-gray-400">No Image</div>`;
+        
+        let distBadge = '';
+        if (b.distance && b.distance !== Infinity) {
+            const distDisplay = b.distance < 1 ? `${(b.distance * 1000).toFixed(0)}m` : `${b.distance.toFixed(1)} km`;
+            distBadge = `<span class="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1">📍 ${distDisplay} away</span>`;
+        }
+
+        const btn = b.username === user 
+            ? `<button onclick="startEdit(${b.id})" class="text-indigo-600 font-bold text-xs">Edit</button>` 
+            : `<button onclick="openChat(${b.user_id}, '${b.username}')" class="bg-indigo-600 text-white px-3 py-1 rounded text-xs">Chat</button>`;
+
+        cont.innerHTML += `
+            <div class="product-card bg-white p-4 rounded-2xl border animate-fade-down" style="animation-delay: ${i*0.05}s">
+                <div class="overflow-hidden rounded-xl mb-3 relative">
+                    ${imgHTML}
+                    ${distBadge ? `<div class="absolute top-2 right-2">${distBadge}</div>` : ''}
+                </div>
+                <div class="flex justify-between items-start">
+                    <h4 class="font-bold truncate w-2/3">${b.title}</h4>
+                    <span class="text-indigo-600 font-bold text-sm">₹${b.price}</span>
+                </div>
+                <p class="text-[10px] text-gray-400 uppercase mt-1">Seller: ${b.username}</p>
+                <div class="mt-2 pt-2 border-t flex justify-between items-center">${btn}</div>
+            </div>`;
+    });
+}
+
+function showDashboard(u) {
+    document.getElementById('login-form').classList.add('hidden');
+    document.getElementById('dashboard').classList.remove('hidden');
+    document.getElementById('user-display').innerText = `Welcome, ${u}!`;
+    document.getElementById('profile-initial').innerText = u.charAt(0).toUpperCase();
+    loadListings();
+}
+
 // --- SOCKET & CHAT ---
 function initSocket(userId) {
     if (socket) return; 
     currentUserId = parseInt(userId);
-    
-    // ✅ Auto-connect to the same host that served the page
     socket = io(BASE_URL); 
 
     socket.on('connect', () => console.log("⚡ Chat Connected"));
@@ -127,11 +250,7 @@ function openInbox() {
     if (!socket) initSocket(uid);
     if(modal) { modal.classList.remove('hidden'); socket.emit('get_inbox', uid); }
 }
-
-function closeInbox() { 
-    const m = document.getElementById('inbox-modal'); 
-    if(m) m.classList.add('hidden'); 
-}
+function closeInbox() { const m = document.getElementById('inbox-modal'); if(m) m.classList.add('hidden'); }
 
 function openChat(rid, rname) {
     if (!currentUserId) currentUserId = parseInt(localStorage.getItem('userId'));
@@ -174,16 +293,8 @@ function appendMessage(text, isMe) {
     scrollToBottom();
 }
 
-function scrollToBottom() { 
-    const c = document.getElementById('chat-messages'); 
-    if(c) c.scrollTop = c.scrollHeight; 
-}
-
-function closeToast() { 
-    const t = document.getElementById('msg-toast'); 
-    if(t) t.classList.add('hidden'); 
-}
-
+function scrollToBottom() { const c = document.getElementById('chat-messages'); if(c) c.scrollTop = c.scrollHeight; }
+function closeToast() { const t = document.getElementById('msg-toast'); if(t) t.classList.add('hidden'); }
 function toggleChatWindow() { document.getElementById('chat-box').classList.toggle('hidden'); }
 function toggleProfileMenu() { document.getElementById('profile-menu').classList.toggle('hidden'); }
 function showRegister() { document.getElementById('login-form').classList.add('hidden'); document.getElementById('register-form').classList.remove('hidden'); }
@@ -191,54 +302,7 @@ function showLogin() { document.getElementById('register-form').classList.add('h
 function toggleSellForm() { document.getElementById('sell-book-section').classList.toggle('hidden'); }
 function resetAndHideForm() { document.getElementById('sell-book-section').classList.add('hidden'); document.getElementById('edit-book-id').value = ''; }
 
-// --- LISTINGS ---
-async function loadListings() {
-    try {
-        const res = await fetch(LISTINGS_URL);
-        allBooks = await res.json();
-        allBooks.sort((a, b) => b.id - a.id);
-        if(document.getElementById('dashboard-title')) document.getElementById('dashboard-title').innerText = ""; 
-        filterBooks();
-    } catch (e) { console.error(e); }
-}
-
-function filterBooks() {
-    const term = document.getElementById('search-box').value.toLowerCase();
-    const cont = document.getElementById('listings-container');
-    const user = localStorage.getItem('username'); 
-    const filtered = allBooks.filter(b => b.title.toLowerCase().includes(term) || b.username.toLowerCase().includes(term));
-    
-    cont.innerHTML = '';
-    filtered.forEach((b, i) => {
-        // ✅ AUTO IMAGE URL
-        const img = b.image_url ? `${BASE_URL}${b.image_url}` : null;
-        const imgHTML = img ? `<img src="${img}" class="w-full h-48 object-cover">` : `<div class="w-full h-48 bg-gray-100 flex items-center justify-center text-xs text-gray-400">No Image</div>`;
-        
-        const btn = b.username === user 
-            ? `<button onclick="startEdit(${b.id})" class="text-indigo-600 font-bold text-xs">Edit</button>` 
-            : `<button onclick="openChat(${b.user_id}, '${b.username}')" class="bg-indigo-600 text-white px-3 py-1 rounded text-xs">Chat</button>`;
-
-        cont.innerHTML += `
-            <div class="product-card bg-white p-4 rounded-2xl border animate-fade-down" style="animation-delay: ${i*0.05}s">
-                <div class="overflow-hidden rounded-xl mb-3">${imgHTML}</div>
-                <div class="flex justify-between items-start">
-                    <h4 class="font-bold truncate w-2/3">${b.title}</h4>
-                    <span class="text-indigo-600 font-bold text-sm">₹${b.price}</span>
-                </div>
-                <p class="text-[10px] text-gray-400 uppercase mt-1">Seller: ${b.username}</p>
-                <div class="mt-2 pt-2 border-t flex justify-between items-center">${btn}</div>
-            </div>`;
-    });
-}
-
-function showDashboard(u) {
-    document.getElementById('login-form').classList.add('hidden');
-    document.getElementById('dashboard').classList.remove('hidden');
-    document.getElementById('user-display').innerText = `Welcome, ${u}!`;
-    document.getElementById('profile-initial').innerText = u.charAt(0).toUpperCase();
-    loadListings();
-}
-
+// --- ADMIN ---
 function showAdminDashboard() {
     document.getElementById('login-form').classList.add('hidden');
     document.getElementById('admin-dashboard').classList.remove('hidden');
@@ -247,6 +311,8 @@ function showAdminDashboard() {
 
 async function loadAdminData() {
     const token = localStorage.getItem('token');
+    
+    // 1. LOAD USERS
     try {
         const res = await fetch(`${API_URL}/users`, { headers: { 'Authorization': token } });
         if(res.ok) {
@@ -256,38 +322,86 @@ async function loadAdminData() {
             if(t) {
                 t.innerHTML = '';
                 users.forEach(u => {
-                    const badge = u.role === 'admin' ? '🛡️ Admin' : '👤 User';
+                    const badge = u.role === 'admin' 
+                        ? `<span class="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider border border-indigo-200">🛡️ Admin</span>`
+                        : `<span class="bg-slate-100 text-slate-500 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider">👤 User</span>`;
+                    
                     t.innerHTML += `
-                        <tr class="border-b">
-                            <td class="p-3 text-gray-400 text-xs">#${u.id}</td>
-                            <td class="p-3 font-bold">${u.username} <span class="text-[10px] bg-gray-100 px-2 py-0.5 rounded ml-2 uppercase">${badge}</span></td>
-                            <td class="p-3 text-right">${u.role !== 'admin' ? `<button onclick="deleteUser(${u.id})" class="text-red-500 hover:text-red-700">🗑</button>` : '<span class="text-xs text-gray-300 italic">Protected</span>'}</td>
+                        <tr class="border-b hover:bg-slate-50 transition-colors">
+                            <td class="p-4 text-slate-400 font-mono text-xs">#${u.id}</td>
+                            <td class="p-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
+                                        ${u.username.charAt(0).toUpperCase()}
+                                    </div>
+                                    <span class="font-black text-slate-700">${u.username}</span>
+                                    ${badge}
+                                </div>
+                            </td>
+                            <td class="p-4 text-right">
+                                ${u.role !== 'admin' ? `<button onclick="deleteUser(${u.id})" class="text-red-400 font-black p-2 hover:bg-red-50 rounded-lg transition-all text-xs hover:text-red-600">🗑 DELETE</button>` : '<span class="text-[10px] text-slate-300 font-black uppercase tracking-widest italic">Protected</span>'}
+                            </td>
                         </tr>`;
                 });
             }
         }
-        
+    } catch(e) { console.error("Admin Users Error:", e); }
+
+    // 2. LOAD LISTINGS (WITH LOCATION)
+    try {
         const resB = await fetch(LISTINGS_URL);
         const books = await resB.json();
         document.getElementById('stat-total-books').innerText = books.length;
         const c = document.getElementById('admin-listings-container');
+        
         if(c) {
             c.innerHTML = '';
-            books.forEach(b => {
-                // ✅ ADMIN IMAGE URL FIX
+            books.forEach((b, index) => {
+                // Image Logic
                 const adminImg = b.image_url ? `${BASE_URL}${b.image_url}` : null;
-                const adminImgHTML = adminImg ? `<img src="${adminImg}" class="w-full h-32 object-cover rounded-xl mb-2">` : `<div class="h-32 bg-gray-50 flex items-center justify-center text-xs text-gray-300 rounded-xl mb-2">No Image</div>`;
+                const adminImgHTML = adminImg 
+                    ? `<img src="${adminImg}" class="w-full h-32 object-cover rounded-xl mb-3 border border-slate-100">` 
+                    : `<div class="h-32 bg-slate-50 flex items-center justify-center text-[10px] text-slate-400 font-black uppercase tracking-widest rounded-xl mb-3 border border-slate-100">No Image</div>`;
+
+                // ✅ LOCATION LOGIC: Generate Map Link
+                let locationBadge = `<span class="text-[10px] text-slate-300 font-bold flex items-center gap-1">🚫 No Loc</span>`;
+                
+                if (b.lat && b.lng) {
+                    // Opens Google Maps in a new tab with the coordinates
+                    const mapLink = `https://www.google.com/maps?q=${b.lat},${b.lng}`;
+                    locationBadge = `
+                        <a href="${mapLink}" target="_blank" class="bg-indigo-50 text-indigo-600 px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-colors flex items-center gap-1">
+                            📍 View Map
+                        </a>`;
+                }
 
                 c.innerHTML += `
-                    <div class="bg-white p-4 border rounded-2xl shadow-sm">
-                        ${adminImgHTML}
-                        <h4 class="font-bold truncate">${b.title}</h4>
-                        <p class="text-[10px] text-gray-500 uppercase">By ${b.username}</p>
-                        <button onclick="deleteListing(${b.id})" class="w-full bg-red-50 text-red-500 text-xs mt-3 py-2 rounded-xl font-bold hover:bg-red-500 hover:text-white transition-colors">Force Delete</button>
+                    <div class="bg-white p-5 border border-slate-100 rounded-[2rem] shadow-sm hover:shadow-md transition-all animate-fade-down" style="animation-delay: ${index * 0.05}s">
+                        <div class="relative">
+                            ${adminImgHTML}
+                            <div class="absolute top-2 right-2">
+                                <span class="bg-black/50 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-lg">₹${b.price}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="flex justify-between items-start mb-2">
+                            <h4 class="font-black text-slate-800 text-sm truncate w-2/3" title="${b.title}">${b.title}</h4>
+                        </div>
+
+                        <div class="flex justify-between items-center mb-4 pt-2 border-t border-slate-50">
+                            <div class="flex items-center gap-2">
+                                <span class="text-[10px] text-slate-400 font-black uppercase tracking-widest">User: ${b.username}</span>
+                            </div>
+                            ${locationBadge}
+                        </div>
+
+                        <button onclick="deleteListing(${b.id})" class="w-full bg-red-50 text-red-500 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all">
+                            Force Delete
+                        </button>
                     </div>`;
             });
         }
-    } catch(e) { console.error("Admin Load Error:", e); }
+    } catch(e) { console.error("Admin Listings Error:", e); }
 }
 
 function toggleSection(s) {
@@ -307,24 +421,11 @@ function showMyListings() {
     const c = document.getElementById('listings-container');
     const my = allBooks.filter(b => b.username === u);
     c.innerHTML = '';
-    
-    if (my.length === 0) {
-        c.innerHTML = '<div class="col-span-full py-10 text-center text-gray-400">You haven\'t listed any products.</div>';
-        return;
-    }
-
+    if (my.length === 0) { c.innerHTML = '<div class="col-span-full py-10 text-center text-gray-400">You haven\'t listed any products.</div>'; return; }
     my.forEach((b,i) => {
         const img = b.image_url ? `${BASE_URL}${b.image_url}` : '';
         const imgHTML = img ? `<img src="${img}" class="w-full h-48 object-cover">` : '<div class="h-48 bg-gray-100 flex items-center justify-center">No Image</div>';
-        c.innerHTML += `
-            <div class="product-card bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 animate-fade-down">
-                <div class="overflow-hidden rounded-xl mb-3">${imgHTML}</div>
-                <h4 class="font-bold truncate">${b.title}</h4>
-                <div class="flex gap-2 mt-3">
-                    <button onclick="startEdit(${b.id})" class="flex-1 bg-white text-indigo-600 rounded-xl py-2 text-xs font-bold border border-indigo-100 shadow-sm hover:bg-indigo-600 hover:text-white transition-all">Edit</button>
-                    <button onclick="deleteListing(${b.id})" class="flex-1 bg-white text-red-500 rounded-xl py-2 text-xs font-bold border border-red-100 shadow-sm hover:bg-red-500 hover:text-white transition-all">Delete</button>
-                </div>
-            </div>`;
+        c.innerHTML += `<div class="product-card bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 animate-fade-down"><div class="overflow-hidden rounded-xl mb-3">${imgHTML}</div><h4 class="font-bold truncate">${b.title}</h4><div class="flex gap-2 mt-3"><button onclick="startEdit(${b.id})" class="flex-1 bg-white text-indigo-600 rounded-xl py-2 text-xs font-bold border border-indigo-100 shadow-sm hover:bg-indigo-600 hover:text-white transition-all">Edit</button><button onclick="deleteListing(${b.id})" class="flex-1 bg-white text-red-500 rounded-xl py-2 text-xs font-bold border border-red-100 shadow-sm hover:bg-red-500 hover:text-white transition-all">Delete</button></div></div>`;
     });
 }
 
@@ -332,29 +433,37 @@ function startEdit(id) {
     const b = allBooks.find(book => book.id === id);
     if(!b) return;
     const f = document.getElementById('sell-book-section');
-    if(f) { 
-        f.classList.remove('hidden'); 
-        document.getElementById('edit-book-id').value = b.id; 
-        document.getElementById('book-title').value = b.title; 
-        document.getElementById('book-price').value = b.price; 
-        document.getElementById('book-desc').value = b.description||''; 
-        document.getElementById('form-submit-btn').innerText="Update Listing"; 
-        f.scrollIntoView({behavior:'smooth'}); 
-    }
+    if(f) { f.classList.remove('hidden'); document.getElementById('edit-book-id').value = b.id; document.getElementById('book-title').value = b.title; document.getElementById('book-price').value = b.price; document.getElementById('book-desc').value = b.description||''; document.getElementById('form-submit-btn').innerText="Update Listing"; f.scrollIntoView({behavior:'smooth'}); }
 }
 
+// ✅ NEW SUBMIT: Auto-capture location inside this function
 async function handleFormSubmit() {
     const id = document.getElementById('edit-book-id').value;
     const title = document.getElementById('book-title').value;
     const price = document.getElementById('book-price').value;
     const desc = document.getElementById('book-desc').value;
     const file = document.getElementById('book-image').files[0];
+    
     if(!title || !price) return alert("Product Title and Price are required.");
     
+    // 🌍 AUTO-CAPTURE LOCATION
+    const btn = document.getElementById('form-submit-btn');
+    const prevText = btn.innerText;
+    btn.innerText = "Getting Location...";
+    btn.disabled = true;
+
+    const coords = await getPosition(); // Get coordinates (can be null if blocked)
+
     const fd = new FormData();
     fd.append('title', title); 
     fd.append('price', price); 
     fd.append('description', desc);
+    
+    if(coords) {
+        fd.append('lat', coords.lat);
+        fd.append('lng', coords.lng);
+    }
+    
     if(file) fd.append('image', file);
     
     try {
@@ -371,5 +480,8 @@ async function handleFormSubmit() {
     } catch(e) { 
         console.error("Form Submit Error:", e);
         alert("Failed to submit listing. Check server connection.");
+    } finally {
+        btn.innerText = prevText;
+        btn.disabled = false;
     }
 }

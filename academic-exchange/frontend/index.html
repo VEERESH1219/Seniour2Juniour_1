@@ -9,48 +9,20 @@
 
     <style>
         /* Animated Background Orbs */
-        .orb {
-            position: fixed;
-            border-radius: 50%;
-            filter: blur(80px);
-            z-index: -1;
-            opacity: 0.35;
-            animation: move 25s infinite alternate ease-in-out;
-        }
+        .orb { position: fixed; border-radius: 50%; filter: blur(80px); z-index: -1; opacity: 0.35; animation: move 25s infinite alternate ease-in-out; }
         .orb-1 { width: 500px; height: 500px; background: #6366f1; top: -10%; left: -10%; }
         .orb-2 { width: 600px; height: 600px; background: #3b82f6; bottom: -10%; right: -10%; animation-delay: -5s; }
         .orb-3 { width: 400px; height: 400px; background: #a855f7; top: 30%; left: 30%; animation-delay: -10s; }
-
-        @keyframes move {
-            from { transform: translate(0, 0) scale(1); }
-            to { transform: translate(150px, 80px) scale(1.15); }
-        }
-
+        @keyframes move { from { transform: translate(0, 0) scale(1); } to { transform: translate(150px, 80px) scale(1.15); } }
         .product-card { transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .product-card:hover { transform: translateY(-12px); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15); }
-
         @keyframes slideInUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         @keyframes fadeInDown { from { transform: translateY(-25px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        
         .animate-slide-up { animation: slideInUp 0.5s ease-out; }
         .animate-fade-down { animation: fadeInDown 0.5s ease-out; }
-        
         #chat-messages::-webkit-scrollbar, #inbox-list::-webkit-scrollbar { width: 5px; }
         #chat-messages::-webkit-scrollbar-thumb, #inbox-list::-webkit-scrollbar-thumb { background: #6366f1; border-radius: 10px; }
-
-        button { position: relative; overflow: hidden; transition: all 0.3s ease; }
-        button:after {
-            content: ''; position: absolute; top: -50%; left: -60%; width: 25%; height: 200%;
-            background: rgba(255, 255, 255, 0.25); transform: rotate(30deg);
-            transition: all 0.6s cubic-bezier(0.19, 1, 0.22, 1);
-        }
-        button:hover:after { left: 120%; }
-
-        /* Glass effect for Modal */
-        .glass-modal {
-            backdrop-filter: blur(12px);
-            background-color: rgba(255, 255, 255, 0.85);
-        }
+        .glass-modal { backdrop-filter: blur(12px); background-color: rgba(255, 255, 255, 0.85); }
     </style>
 </head>
 <body class="bg-slate-50 min-h-screen flex flex-col items-center pt-8 p-4 font-sans selection:bg-indigo-200 overflow-x-hidden">
@@ -119,6 +91,21 @@
                     <input type="text" id="book-desc" placeholder="Description" class="w-full p-5 bg-white border rounded-2xl font-bold">
                 </div>
                 <button id="form-submit-btn" onclick="handleFormSubmit()" class="mt-10 bg-indigo-600 text-white font-black py-5 px-12 rounded-2xl uppercase text-xs">Publish Listing</button>
+            </div>
+
+            <div id="location-bar" class="hidden mb-8 bg-white px-6 py-4 rounded-[2rem] shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4 animate-fade-down">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">📍</div>
+                    <div>
+                        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Location Active</p>
+                        <p class="text-xs font-black text-slate-700">Showing closest products first</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-xl">
+                    <span class="text-[10px] font-bold text-slate-400">MAX DISTANCE:</span>
+                    <input type="range" id="range-slider" min="1" max="100" value="50" oninput="filterBooks()" class="accent-indigo-600 cursor-pointer">
+                    <span id="range-val" class="text-indigo-600 font-bold text-sm w-12 text-right">50 km</span>
+                </div>
             </div>
 
             <input type="text" id="search-box" onkeyup="filterBooks()" placeholder="Search..." class="w-full p-5 bg-slate-50 border border-slate-100 rounded-[2rem] mb-12 font-bold outline-none focus:ring-4 focus:ring-indigo-500/10">
